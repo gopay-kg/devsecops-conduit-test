@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-tests.txt
+      - run: python -m pytest tests/unit -v
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --log-opts=HEAD --no-banner -v
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: conduit
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: conduit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U conduit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: prod
+      SECRET_KEY: ci-only-key
+      JWT_SECRET_KEY: ci-only-key
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: conduit
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_DB: conduit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install the API and the tests
+        run: pip install -r backend/requirements.txt -r requirements-tests.txt
+      - name: Prepare the database
+        working-directory: backend
+        run: python -m alembic -c alembic.ini upgrade head
+      - name: Start the API in the background
+        working-directory: backend
+        run: uvicorn conduit.app:app --port 8000 > ../api.log 2>&1 &
+      - name: Wait until the API answers
+        run: timeout 30 bash -c 'until curl -fs http://127.0.0.1:8000/api/health-check; do sleep 1; done'
+      - run: python -m pytest tests/integration -v
+      - name: Show the API log if something failed
+        if: failure()
+        run: cat api.log
