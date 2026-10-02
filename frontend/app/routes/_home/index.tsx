@@ -40,7 +40,7 @@ export default function Home() {
       <div className="banner">
         <div className="container">
           <h1 className="logo-font">conduit</h1>
-          <p>A place to share your knowledge.</p>
+          <p>Released by a robot, checked by people.</p>
         </div>
       </div>
 
